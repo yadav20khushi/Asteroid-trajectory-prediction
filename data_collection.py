@@ -1,21 +1,45 @@
 import requests
-import csv
-api_url = "https://ssd-api.jpl.nasa.gov/sbdb.api?neo=1&spk=2000433&full-prec=true&soln-epoch=true&cd-epoch=true&ca-body=Earth&radar-obs=true&phys-par=true"
+import pandas as pd
+import os
+from dotenv import load_dotenv
 
-r = requests.get(api_url).json()
-c = csv.writer(open('433_data.csv','w'),lineterminator='\n')
-#Data from the object key
-c.writerow([r['object']['orbit_class']['name'],r['object']['fullname'],r['object']['pha']])
-#Data from Radar_obs key
-for i in range(len(r['radar_obs'])):
-    c.writerow([r['radar_obs'][i]['freq'],r['radar_obs'][i]['sigma'],r['radar_obs'][i]['value'],r['radar_obs'][i]['epoch'],r['radar_obs'][i]['units']])
-#Data from orbit key
-for i in range(len(r['orbit']['elements'])):
-    c.writerow([r['orbit']['elements'][i]['name'],r['orbit']['elements'][i]['value']])
-c.writerow([r['orbit']['data_arc'],r['orbit']['epoch'],r['orbit']['first_obs'],r['orbit']['last_obs'],r['orbit']['moid'],r['orbit']['moid_jup'],r['orbit']['t_jup'],r['orbit']['n_obs_used']])
-#Data from phy_par key
-name = ['H','G','diameter','GM','density','rot_per','albedo','spec_T','spec_B']
-for i in range(len(r['phys_par'])):
-    if r['phys_par'][i]['name'] in name:
-        c.writerow([r['phys_par'][i]['name'],r['phys_par'][i]['value']])
-
+try:
+    load_dotenv()
+    api_url = os.getenv('api_url')
+    response = requests.get(api_url)
+    response.raise_for_status()
+    r = response.json()
+    asteroids_data = []
+    #Data from the object key -- general data
+    asteroids = {'orbit_class_name': r.get('object', {}).get('orbit_class', {}).get('name', 'N/A'),
+                 'fullname': r.get('object', {}).get('fullname', 'N/A'), 'pha': r.get('object', {}).get('pha', 'N/A')}
+    #Data from orbit key -- general data
+    orbit = r.get('orbit', {}).get('elements', [])
+    for ele in orbit:
+        asteroids[ele.get('name', 'N/A')] = ele.get('value', 'N/A')
+    #Data from phy_par key -- general data
+    phys_par_list = r.get('phys_par', [])
+    valid_par = os.getenv('valid_par')
+    if phys_par_list:
+        for par in phys_par_list:
+            if par.get('name') in valid_par:
+                asteroids[par.get('name', 'N/A')] = par.get('value', 'N/A')
+    # Data from Radar_obs key -- multiple rows
+    radar_obs = r.get('radar_obs', [])
+    if radar_obs:
+        for obs in radar_obs:
+            row = asteroids.copy() #copies general data
+            row['freq'] = obs.get('freq', 'N/A')
+            row['sigma'] = obs.get('sigma', 'N/A')
+            row['value'] = obs.get('value', 'N/A')
+            row['epoch'] = obs.get('epoch', 'N/A')
+            row['units'] = obs.get('units', 'N/A')
+            asteroids_data.append(row) #adds general data + multiple rows
+    else:
+        asteroids_data.append(asteroids) #adds general data if no radar data found
+    #Converting asteroids dict to pd dataframe
+    df = pd.DataFrame(asteroids_data)
+    df.to_csv('NEA_433.csv', index='False', encoding='utf-8')
+    print("Successfully generated CSV")
+except requests.exceptions.RequestException as e:
+    print(f"Error fetching API data: {e}")
